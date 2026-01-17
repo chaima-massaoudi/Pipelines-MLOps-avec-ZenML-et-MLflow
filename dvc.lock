@@ -1,0 +1,20 @@
+schema: '2.0'
+stages:
+  make_tiny_person:
+    cmd: python tools/make_tiny_person_from_coco128.py
+    deps:
+    - path: data/coco128
+      hash: md5
+      md5: ca2b7b080f2883477fd03d40732b8f9b.dir
+      size: 0
+      nfiles: 3
+    - path: tools/make_tiny_person_from_coco128.py
+      hash: md5
+      md5: 4a950c08e906552252d914aaf263ee23
+      size: 2984
+    outs:
+    - path: data/tiny_coco
+      hash: md5
+      md5: f68d2232d69073dc841d5cd07ee99dac.dir
+      size: 2198466
+      nfiles: 120

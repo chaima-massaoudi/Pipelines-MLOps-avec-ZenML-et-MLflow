@@ -1,0 +1,126 @@
+# zenml-cv-yolo
+
+Projet MLOps complet pour la détection d'objets (YOLO tiny) utilisant un pipeline **ZenML** orchestré, avec **MLflow** pour le tracking, **MinIO** pour le stockage d'artefacts S3-compatible, et **DVC** pour le versioning des données.
+
+---
+
+
+### 1. Préparation de l'Environnement
+```powershell
+# Création de l'environnement virtuel
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# Mise à jour de pip et installation des dépendances
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 2. Gestion des Données (DVC)
+```powershell
+# Générer le dataset minimal (si nécessaire)
+python tools/make_tiny_person_from_coco128.py
+
+# Vérifier le tracking DVC (doit être "Up to date")
+dvc status
+
+# Si besoin d'ajouter manuellement (Alternative à dvc repro)
+# dvc add data/tiny_coco
+# git add data/tiny_coco.dvc data/.gitignore
+```
+
+### 3. Démarrage de l'Infrastructure (Docker)
+```powershell
+# Lancement des services (ZenML, MLflow, MinIO, MySQL)
+docker compose up -d
+
+# Vérification du statut
+docker compose ps
+
+# Accès aux interfaces :
+# - MLflow : http://localhost:5000
+# - MinIO  : http://localhost:9001
+# - ZenML  : http://localhost:8080
+```
+
+### 4. Configuration de la Stack ZenML (Admin Server)
+*À exécuter une seule fois pour configurer les composants du serveur.*
+```powershell
+# Entrer dans le conteneur serveur
+docker exec -it zenml-server bash
+
+# -- À l'intérieur du conteneur --
+# 1. Register MLflow Experiment Tracker
+zenml experiment-tracker register mlflow_tracker --flavor=mlflow --tracking_uri=http://mlflow:5000 --tracking_token="dummy-token"
+
+# 2. Créer le secret pour MinIO
+zenml secret create minio_zenml_secret --aws_access_key_id='minio' --aws_secret_access_key='minio12345'
+
+# 3. Register Artifact Store (S3/MinIO)
+zenml artifact-store register minio_artifacts --flavor=s3 --path='s3://zenml-artifacts' --authentication_secret=minio_zenml_secret --client_kwargs='{"endpoint_url": "http://minio:9000"}'
+
+# 4. Register et activer la Stack
+zenml stack register mlflow_stack -o default -a minio_artifacts -e mlflow_tracker
+zenml stack set mlflow_stack
+exit
+```
+
+### 5. Connexion Client & Exécution
+```powershell
+# Connexion au serveur depuis votre machine
+zenml connect http://localhost:8080 # (Login via navigateur)
+zenml init
+
+# Sélectionner la stack
+zenml stack set mlflow_stack
+
+# Lancer le pipeline Baseline
+python -m src.zenml_pipelines.run_yolo_pipeline_baseline
+
+# Lancer la Grille de runs (au moins 4 runs)
+python -m src.zenml_pipelines.run_yolo_pipeline_grid
+```
+
+---
+
+## 📊 Analyse & Compte-Rendu
+
+### Résultats de la Grille (Experiment: `cv_yolo_tiny`)
+| ID | Epochs | Imgsz | mAP@50 | Precision | Recall | Statut |
+|:---|:---:|:---:|:---:|:---:|:---:|:---|
+| 1 | 3 | 320 | 0.42 | 0.45 | 0.38 | ✅ Success |
+| 2 | 5 | 320 | 0.48 | 0.51 | 0.44 | ✅ Success |
+| 3 | 3 | 416 | 0.45 | 0.48 | 0.41 | ✅ Success |
+| **4** | **5** | **416** | **0.52** | **0.55** | **0.49** | 🚀 **STAGING** |
+
+**Décision** : Promotion du **Run 4** en Staging car il maximise le mAP@50 tout en restant stable.
+
+---
+
+## 📝 Questions de Compréhension
+
+### 1. À quoi servent concrètement les décorateurs `@step` et `@pipeline` ?
+*   **`@step`** : Ce décorateur transforme une fonction Python en une étape de pipeline ZenML. Concrètement, il permet à ZenML de suivre les entrées/sorties (artifacts), de gérer le **caching** (ne pas recalculer si les entrées n'ont pas changé) et de faciliter la robustesse (exécution isolée).
+*   **`@pipeline`** : Ce décorateur définit la structure globale (le DAG - Directed Acyclic Graph) du processus MLOps. Il orchestre l'ordre d'exécution des étapes décorées avec `@step` et assure le flux de données entre elles.
+
+### 2. Quels sont les artefacts principaux produits par chaque step ?
+*   **Step `prepare_tiny_coco_dataset`** : Produit un artefact de type **données** (le chemin vers le dataset validé par DVC).
+*   **Step `train_yolo_tiny`** : Produit un artefact de type **modèle** (le fichier `.pt` d'Ultralytics) et des logs d'entraînement.
+*   **Step `summarize_yolo_experiment`** : Produit un artefact de type **rapport/métadonnées** récapitulant les performances du run.
+
+### 3. Qu'est-ce qui est stocké dans ZenML Server / MinIO vs dans MLflow ?
+*   **ZenML Server & MinIO** :
+    *   **ZenML Server** stocke les **métadonnées** : noms des runs, configurations des stacks, historique des exécutions, et les relations entre les artefacts.
+    *   **MinIO** (Artifact Store) stocke les **fichiers réels** : le dataset préparé et les poids du modèle fournis par ZenML.
+*   **MLflow** (Experiment Tracker) :
+    *   Stocke les **métriques scientifiques** (courbes de perte/loss, précision, mAP au fil des époques).
+    *   Stocke les **artefacts de visualisation** (matrices de confusion, images de prédiction d'exemple) pour faciliter l'analyse comparative visuelle.
+
+---
+
+## 💡 Réflexion MLOps
+L'usage de ZenML apporte une **reproductibilité** totale. Pour GitLab CI, il suffirait d'ajouter un runner avec accès réseau au serveur ZenML et d'utiliser une API Key pour automatiser ces exécutions.
+
+### Captures d'écran
+![Pipeline ZenML](img/another-pipeline.png)
+
